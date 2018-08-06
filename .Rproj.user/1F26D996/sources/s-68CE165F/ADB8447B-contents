@@ -1,0 +1,184 @@
+---
+title: "Camden Air Quality"
+author: "James David Smith"
+date: "28 June 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+rm(list=ls())
+
+knitr::opts_chunk$set(echo = TRUE)
+
+### Loading any missing libraries
+
+library(rvest)
+library(stringr)
+library(raster)
+library(rgdal)
+library(rgeos)
+library(ggplot2)
+library(sf)
+library(rmarkdown)
+library(rasterVis)
+```
+
+Get boundary for Camden
+
+```{r get_camden_outline}
+
+ukgrid      <- "+init=epsg:27700"
+latlong     <- "+init=epsg:4326"
+
+authorities <- data.frame(authority_name = c('Camden'),
+                          stringsAsFactors = F)
+
+###  getting a geojson of UK wards from governmant data portal
+
+url                 <- 'https://opendata.arcgis.com/datasets/d5c9c1d89a5a44e9a7f88f182ffe5ba2_2.geojson'
+wards               <- readOGR(dsn = url, layer = "d5c9c1d89a5a44e9a7f88f182ffe5ba2_2")
+wards               <- spTransform(wards, ukgrid)
+wards               <- wards[wards$lad16nm %in% authorities$authority_name,]
+
+```
+
+
+List raster files in directory
+
+```{r find_raster_files}
+
+asc_file_list  <- list.files(path = 'X:/SmallProjects/Camden/Modelling/', pattern = "\\.asc$", full.names = TRUE, recursive = TRUE, include.dirs = TRUE)
+
+asc_file_names <- sub(".*/", "", asc_file_list)
+
+adf_file_list  <- list.files(path = 'X:/SmallProjects/Camden/Modelling/', pattern = "\\w001001.adf$", full.names = TRUE, recursive = TRUE, include.dirs = TRUE)
+
+adf_file_names <- sub("/w001001.adf", "", adf_file_list)
+adf_file_names <- sub(".*/", "", adf_file_names)
+
+file_list  <- c(asc_file_list, adf_file_list)
+file_names <- c(asc_file_names, adf_file_names)
+
+rm(asc_file_list, adf_file_list)
+
+```
+
+Import raster layers
+
+```{r import_raster_layers}
+
+rasters <- list()
+
+for (i in 1:length(file_list)){
+  
+  temp_raster         <- raster(file_list[[i]])
+  
+  crs(temp_raster)    <- CRS(ukgrid)
+
+  temp_raster         <- crop(temp_raster,    wards)
+  
+  temp_raster         <- mask(temp_raster,    wards)
+  
+  temp_raster         <- disaggregate(temp_raster,    fact = 4, method="bilinear")
+  
+  rasters[[i]]        <- temp_raster
+}
+
+```
+
+```{r name_rasters}
+
+for (i in 1:length(rasters)) {
+  names(rasters[[i]]) <- file_names[[i]]
+}
+
+```
+
+Import LAEI colour schemes
+
+```{r laei_colour_shemes}
+
+source('https://raw.githubusercontent.com/KCL-ERG/colour_schemes/master/pm25_laei2013_colours_breaks.R')
+source('https://raw.githubusercontent.com/KCL-ERG/colour_schemes/master/no2_laei2013_colours_breaks.R')
+source('https://raw.githubusercontent.com/KCL-ERG/colour_schemes/master/pm10_laei2013_colours_breaks.R')
+
+```
+
+Save as png and asc files.
+
+```{r plot maps}
+
+for (i in 1:length(rasters)) {
+  
+  raster_to_plot <- rasters[[i]]
+  
+  if (grepl('PM25',names(raster_to_plot)) | grepl('pm25',names(raster_to_plot))) {
+             colours <- pm25_laei2013_colours
+             breaks  <- pm25_laei2013_breaks
+             labels  <- pm25_laei2013_labels }
+  
+
+  if (grepl('PM10',names(raster_to_plot)) | grepl('pm10',names(raster_to_plot))) {
+             colours <- pm10_laei2013_colours
+             breaks  <- pm10_laei2013_breaks
+             labels  <- pm10_laei2013_labels }
+  
+
+  if (grepl('NO',names(raster_to_plot)) | grepl('no',names(raster_to_plot))) {
+             colours <- no2_laei2013_colours
+             breaks  <- no2_laei2013_breaks
+             labels  <- no2_laei2013_labels }
+
+  if (file_names[[i]] %in% asc_file_names) {
+    plot <- levelplot(raster_to_plot,
+          maxpixels = raster_to_plot@ncols/2 * raster_to_plot@nrows/2,
+          margin = FALSE,
+          colorkey = list(
+            at = seq(min(breaks), max(breaks), length = length(breaks)),
+            space = 'right',
+            labels = list(at=seq(min(breaks), max(breaks), length = length(breaks)), 
+                          labels = paste(" \n \n ",labels), 
+                          font = 1,
+                          cex = 1.5)
+          ),
+          par.settings = list(
+            axis.line =list( col = 'transparent')
+          ),
+          scales = list(draw = FALSE),
+          col.regions = colours,
+          at = breaks)
+  }
+  
+  if (file_names[[i]] %in% adf_file_names) {
+    
+    breaks  <- c(0,format(round(quantile(raster_to_plot, seq(0,1,length.out = 10)),4), scientific=F), round(cellStats(raster_to_plot, stat=max)+2,0)) #17
+    labels  <- c("", paste(breaks[1:length(breaks)-1], "-", 
+                                    breaks[2:length(breaks)])) #17 (same as breaks)
+    
+    plot <- levelplot(raster_to_plot,
+          maxpixels = raster_to_plot@ncols/2 * raster_to_plot@nrows/2,
+          margin = FALSE,
+          colorkey = list(
+            at = seq(min(breaks), max(breaks), length = length(breaks)),
+            space = 'right',
+            labels = list(at=seq(min(breaks), max(breaks), length = length(breaks)), 
+                          labels = paste(" \n \n ",labels), 
+                          font = 1,
+                          cex = 1.5)
+          ),
+          par.settings = list(
+            axis.line =list( col = 'transparent')
+          ),
+          scales = list(draw = FALSE),
+          col.regions = colours,
+          at = breaks)
+  }
+  
+    png(paste0('png_outputs/', file_names[[i]], '.png'), width = 10, height = 8, units = 'in', res = 300)
+    print(plot)
+    dev.off()
+    
+    writeRaster(raster_to_plot, paste0('asc_outputs/', file_names[[i]]), format = "ascii", overwrite=T)
+
+}
+```
