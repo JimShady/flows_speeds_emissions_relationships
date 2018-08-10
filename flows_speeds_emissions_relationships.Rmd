@@ -1,0 +1,377 @@
+---
+title: "Regressing emissions from vehicle and road data"
+author: "James David Smith"
+date: "6 August 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+rm(list=ls())
+
+knitr::opts_chunk$set(echo = TRUE)
+
+### Loading any missing libraries
+
+library(rvest)
+library(stringr)
+library(raster)
+library(rgdal)
+library(rgeos)
+library(ggplot2)
+library(sf)
+library(rmarkdown)
+library(rasterVis)
+library(knitr)
+library(kableExtra)
+library(reshape2)
+library(mapview)
+require(spatialEco)
+require(sp)
+```
+
+### Grid points
+
+Import points which represent 1km grid centroids of a grid covering London
+
+```{r import_grid_points}
+
+grid        <- read.csv('X:/Projects/LAEI2013_TfL_Strategy/z_GridsForJames.csv')
+grid        <- grid[,c('GridIdEx', 'Easting', 'Northing')]
+
+names(grid) <- c('grid_exact_cut', 'easting', 'northing')
+
+```
+
+This gives a table of **`r nrow(grid)` rows**, show below.
+
+```{r, echo=F}
+kable(head(grid)) %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F, position = "left")
+```
+
+### Traffic flows
+
+Now import traffic flows by toid and grid exact cut, and edit/clean to get what we need
+
+```{r import_traffic_flows}
+
+traffic_flows                 <- read.csv('X:/Projects/LAEI2013_Gdrive/TrafficFlows/Major_WithAdjustedIbus_AADT/z_AADT_ExactCut_WithIbus_2013.csv')
+names(traffic_flows)          <- tolower(names(traffic_flows))
+
+drop                          <- c('year', 'location_exactcut', 'boroughname_exactcut', 'tlrn', 'irr', 'motorwaynumber', 'petrolcar', 'dieselcar', 'electriccar', 'petrollgv', 'diesellgv', 'electriclgv', 'ltbus', 'coach')
+traffic_flows                 <- traffic_flows[, !(names(traffic_flows) %in% drop)]
+
+traffic_flows$toid            <- as.character(traffic_flows$toid)
+
+traffic_flows$total_vehicles  <- (traffic_flows$motorcycle + traffic_flows$taxi + traffic_flows$car + traffic_flows$busandcoach + traffic_flows$lgv + traffic_flows$rigid2axle + traffic_flows$rigid3axle + traffic_flows$rigid4axle +     traffic_flows$artic3axle + traffic_flows$artic5axle + traffic_flows$artic6axle)
+
+traffic_flows$total_light     <- (traffic_flows$motorcycle + traffic_flows$taxi + traffic_flows$car)
+
+traffic_flows$total_heavy     <- (traffic_flows$busandcoach + traffic_flows$lgv + traffic_flows$rigid2axle + traffic_flows$rigid3axle + traffic_flows$rigid4axle + traffic_flows$artic3axle + traffic_flows$artic5axle + traffic_flows$artic6axle)
+
+drop                          <- c('motorcycle', 'taxi', 'car', 'busandcoach', 'lgv', 'rigid2axle', 'rigid3axle', 'rigid4axle', 'artic3axle', 'artic5axle', 'artic6axle')
+traffic_flows                 <- traffic_flows[, !(names(traffic_flows) %in% drop)]
+
+```
+
+This gives a table of **`r nrow(traffic_flows)` rows**, show below.
+
+```{r, echo=F}
+kable(head(traffic_flows)) %>%  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F, position = "left")
+```
+
+### Emissions
+
+Import emissions by toid and grid exact cut
+
+```{r import_emissions}
+
+emissions                     <- read.csv('X:/Projects/LAEI2013_TfL_Strategy/FilesForHerald4/EmissionsByLink/INPUT_RESULTS_LAEI_ExactCutIntersect_Major_2013_LAEI_V117.csv')
+names(emissions)              <- tolower(names(emissions))
+
+drop                          <- c('emissions', 'year', 'petrolcar', 'dieselcar', 'petrollgv', 'diesellgv', 'ltbus', 'coach', 'electriccar', 'electriclgv')
+emissions                     <- emissions[, !(names(emissions) %in% drop)]
+
+emissions$total_emissions     <- emissions$motorcycle + emissions$taxi + emissions$car + emissions$busandcoach + emissions$lgv + emissions$rigid + emissions$artic + emissions$rigid2axle + emissions$rigid3axle + emissions$rigid4axle + emissions$artic3axle + emissions$artic5axle + emissions$artic6axle
+
+emissions$toid                <- as.character(emissions$toid)
+
+drop                          <- c('motorcycle', 'taxi', 'car', 'busandcoach', 'lgv', 'rigid', 'artic', 'rigid2axle', 'rigid3axle', 'rigid4axle', 'artic3axle', 'artic5axle', 'artic6axle')
+emissions                     <- emissions[, !(names(emissions) %in% drop)]
+
+emissions                     <- emissions[!(emissions$pollutant %in% c('TB_PM10_SW', 'TB_PM25_SW')),]
+
+```
+
+Not going to need all the constiuent parts of the emissions, just the total by each. So aggregate up.
+
+```{r aggregate_emissions}
+
+emissions$pollutant           <- as.character(emissions$pollutant)
+
+emissions[grep('pm25', tolower(emissions$pollutant)),'pollutant'] <- 'pm25'
+emissions[grep('pm10', tolower(emissions$pollutant)),'pollutant'] <- 'pm10'
+
+aggregate(total_emissions ~ gridid + toid + grid_exactcut_id + dotref + length + pollutant, data=emissions, sum, na.rm=TRUE)
+
+
+
+```
+
+This gives a table of **`r nrow(emissions)` rows**, show below.
+
+```{r, echo=F}
+kable(head(emissions)) %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F, position = "left")
+```
+
+### Joining traffic to grids
+
+```{r joining_traffic_to_grid}
+
+grid_traffic              <- merge(traffic_flows, grid, by.x = c('grid_exactcut_id'), by.y = c('grid_exact_cut'))
+rm(traffic_flows)
+grid_traffic              <- grid_traffic[order(grid_traffic$toid),]
+```
+
+Looks like this
+
+```{r, echo=F}
+kable(head(grid_traffic)) %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F, position = "left")
+```
+
+Now take the mean traffic flow, on each toid, by grid square (using easting and northing)
+
+```{r mean_traffic_by_toid_grid}
+grid_traffic <- aggregate(data = grid_traffic, FUN=mean, cbind(speed, total_vehicles, total_light, total_heavy)~ easting+northing+toid)
+```
+
+Now looks like this
+
+```{r, echo=F}
+kable(head(grid_traffic[order(grid_traffic$toid),])) %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F, position = "left")
+```
+
+### Joining emissions to grids
+
+```{r joining_grids_to_emissions}
+
+emissions_grids              <- merge(emissions, grid, by.x = 'grid_exactcut_id', by.y = 'grid_exact_cut')
+rm(emissions)
+emissions_grids              <- emissions_grids[order(emissions_grids$toid),]
+
+```
+
+### Joining grids to emissions to traffic
+
+```{r joining_grids_to_emissions_to_traffic}
+
+all_data                <- merge(emissions_grids, grid_traffic, by.x = c('toid', 'easting', 'northing'), by.y = c('toid', 'easting', 'northing'))
+
+rm(grid, grid_traffic, emissions_grids,drop)
+
+```
+
+Example of final data for NO2 and one grid cell
+
+```{r, echo=F}
+kable(all_data[all_data$easting == 512500 & all_data$northing == 198500 & all_data$pollutant == 'NO2',]) %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F, position = "left")
+```
+
+### Aggregate 1km grids to 10km grids of total emissions
+
+First sum emissions by the 1km, to 1km grid, and create raster stacks from them
+
+```{r sum_up_emissions_by_1km}
+ukgrid = "+init=epsg:27700"
+
+one_km_emissions <- aggregate(data = all_data, total_emissions ~ pollutant + easting + northing, FUN=sum)
+
+sources          <- as.character((unique(one_km_emissions$pollutant)))
+
+for (i in 1:length(sources)) {
+  
+  temp              <- one_km_emissions[one_km_emissions$pollutant == sources[i],]
+  coordinates(temp) <- ~ easting + northing
+  temp$pollutant    <- NULL
+  gridded(temp)     <- TRUE
+  proj4string(temp) <- CRS(ukgrid)
+  temp              <- raster(temp)
+  names(temp)       <- tolower(sources[i])
+
+  if (i == 1) { one_km_emissions_raster <- temp} else {one_km_emissions_raster <- stack(one_km_emissions_raster, temp)}
+  
+}
+
+```
+
+Here's an example of what we have so far for the grids
+
+```{r, echo=F}
+plot(one_km_emissions_raster$no2)
+```
+
+Nwo aggregate up to 10km grid
+
+```{r make_ten_km_grid}
+ten_km_emissions_raster  <- aggregate(one_km_emissions_raster, fact = 10, fun=sum)
+
+plot(ten_km_emissions_raster$no2)
+
+rm(one_km_emissions, one_km_emissions_raster, temp, i)
+```
+
+Now need to think about how these concentrations at 10km level, relate to the road link that contributed them, and get the relationship between them.
+
+```{r linking_10km_back_to_roads}
+ten_km_emissions_polygons <- rasterToPolygons(ten_km_emissions_raster)
+
+mapview(ten_km_emissions_polygons, map.types = 'OpenStreetMap')
+
+```
+
+```{r map_originals_to_points}
+
+coordinates(all_data)           <- ~ easting + northing
+proj4string(all_data)           <- CRS(ukgrid)
+
+```
+
+This code now looks at each road, sees which overall 10km grid it is in, and then divides each pollutant by the total of that pollutant in the square. Puts the result into 'ten_km_contribution' variable.
+
+```{r get_point_polygon_and_divide}
+
+result                                                  <- point.in.poly(all_data, ten_km_emissions_polygons)
+
+result                                                  <- data.frame(result)
+
+result$ten_km_contribution                              <- NA
+
+result[result$pollutant == 'NO2',]$ten_km_contribution            <- result[result$pollutant == 'NO2',]$total_emissions            / result[result$pollutant == 'NO2',]$no2
+result[result$pollutant == 'NOx',]$ten_km_contribution            <- result[result$pollutant == 'NOx',]$total_emissions            / result[result$pollutant == 'NOx',]$nox
+result[result$pollutant == 'Exhaust_PM10',]$ten_km_contribution   <- result[result$pollutant == 'Exhaust_PM10',]$total_emissions   / result[result$pollutant == 'Exhaust_PM10',]$exhaust_pm10
+result[result$pollutant == 'TB_PM25_Tyre',]$ten_km_contribution   <- result[result$pollutant == 'TB_PM25_Tyre',]$total_emissions   / result[result$pollutant == 'TB_PM25_Tyre',]$tb_pm10_tyre
+result[result$pollutant == 'TB_PM25_Brake',]$ten_km_contribution  <- result[result$pollutant == 'TB_PM25_Brake',]$total_emissions  / result[result$pollutant == 'TB_PM25_Brake',]$tb_pm25_brake
+result[result$pollutant == 'TB_PM10_Resusp',]$ten_km_contribution <- result[result$pollutant == 'TB_PM10_Resusp',]$total_emissions / result[result$pollutant == 'TB_PM10_Resusp',]$tb_pm25_resusp
+result[result$pollutant == 'TB_PM10_Tyre',]$ten_km_contribution   <- result[result$pollutant == 'TB_PM10_Tyre',]$total_emissions   / result[result$pollutant == 'TB_PM10_Tyre',]$tb_pm10_tyre
+result[result$pollutant == 'TB_PM25_Resusp',]$ten_km_contribution <- result[result$pollutant == 'TB_PM25_Resusp',]$total_emissions / result[result$pollutant == 'TB_PM25_Resusp',]$tb_pm25_resusp
+result[result$pollutant == 'TB_PM10_Brake',]$ten_km_contribution  <- result[result$pollutant == 'TB_PM10_Brake',]$total_emissions  / result[result$pollutant == 'TB_PM10_Brake',]$tb_pm10_brake
+result[result$pollutant == 'Exhaust_PM25',]$ten_km_contribution   <- result[result$pollutant == 'Exhaust_PM25',]$total_emissions   / result[result$pollutant == 'Exhaust_PM25',]$exhaust_pm25
+
+rm(all_data)
+
+
+```
+
+### Regression
+
+Take 80% of the data as a training data set
+
+```{r make_training_model}
+
+training_index <- sample(nrow(result), round(nrow(result) * 0.8,0))
+
+training_data <- result[training_index,]
+
+```
+
+Seperate the other 20% as a testing data set
+
+```{r make_testing_data}
+
+testing_data <- result[-training_index,]
+
+```
+
+Look at relationships between the variables and the emissions
+
+```{r ggplot_of_variables1, fig.width=10, fig.cap="Emission contribution to 10km grid per TOID (exact cut) against total vehicle on that TOID (exact cut)"}
+
+ggplot(training_data, aes(total_vehicles, ten_km_contribution)) +
+  geom_point(alpha = 0.2, colour = 'blue', fill = 'blue', size=0.5) +
+  facet_wrap(.~pollutant, scales = 'free') +
+  geom_smooth(colour = 'red', method = 'lm') +
+  xlab('Number of cars') +
+  ylab('Contribution to 10km grid emissions')
+
+```
+
+```{r ggplot_of_variables2, fig.width=12, fig.cap="Emission contribution to 10km grid per TOID (exact cut) against total light vehicle on that TOID (exact cut)"}
+
+ggplot(training_data, aes(total_light, ten_km_contribution)) +
+  geom_point(alpha = 0.2, colour = 'blue', fill = 'blue', size=0.5) +
+  facet_wrap(.~pollutant, scales = 'free') +
+  geom_smooth(colour = 'red', method = 'lm') +
+  xlab('Number of light vehicles') +
+  ylab('Contribution to 10km grid emissions')
+
+```
+
+```{r ggplot_of_variables3, fig.width=12, fig.cap="Emission contribution to 10km grid per TOID (exact cut) against total heavy vehicle on that TOID (exact cut)"}
+
+ggplot(training_data, aes(total_heavy, ten_km_contribution)) +
+  geom_point(alpha = 0.2, colour = 'blue', fill = 'blue', size=0.5) +
+  facet_wrap(.~pollutant, scales = 'free') +
+  geom_smooth(colour = 'red', method = 'lm') +
+  xlab('Number of heavy vehicles') +
+  ylab('Contribution to 10km grid emissions')
+
+```
+
+```{r ggplot_of_variables4, fig.width=12, fig.cap="Emission contribution to 10km grid per TOID (exact cut) against speed on that TOID (exact cut)"}
+
+ggplot(training_data, aes(speed, ten_km_contribution)) +
+  geom_point(alpha = 0.2, colour = 'blue', fill = 'blue', size=0.5) +
+  facet_wrap(.~pollutant, scales = 'free') +
+  geom_smooth(colour = 'red', method = 'lm') +
+  xlab('Number of heavy vehicles') +
+  ylab('Contribution to 10km grid emissions')
+
+```
+
+```{r ggplot_of_variables5, fig.width=12, fig.cap="Emission contribution to 10km grid per TOID (exact cut) against length on that TOID (exact cut)"}
+
+ggplot(training_data, aes(length, ten_km_contribution)) +
+  geom_point(alpha = 0.2, colour = 'blue', fill = 'blue', size=0.5) +
+  facet_wrap(.~pollutant, scales = 'free') +
+  geom_smooth(colour = 'red', method = 'lm') +
+  xlab('Length of toid') +
+  ylab('Contribution to 10km grid emissions')
+
+```
+
+
+Make a liner regression using the training data (just doing NO2 for now)
+
+```{r make_regression}
+
+model <- glm(ten_km_contribution ~ length + speed + total_light + total_heavy,
+             data=result[result$pollutant == 'NO2',])
+
+intercept        <- coef(model)[1]
+length_coef      <- coef(model)[2]
+speed_coef       <- coef(model)[3]
+total_light_coef <- coef(model)[4]
+total_heavy_coef <- coef(model)[5]
+
+```
+
+Now use the regression equation on the testing data
+
+```{r test_regression}
+
+testing_data$prediction <- NA
+
+testing_data[testing_data$pollutant == 'NO2','prediction'] <- intercept+(
+                                                                (testing_data[testing_data$pollutant == 'NO2',]$length*length_coef) +
+                                                                (testing_data[testing_data$pollutant == 'NO2',]$speed*speed_coef) +
+                                                                (testing_data[testing_data$pollutant == 'NO2',]$total_light*total_light_coef) +
+                                                                (testing_data[testing_data$pollutant == 'NO2',]$total_heavy*total_heavy_coef))
+
+```
+
+Plot the prediction against the actuals
+```{r plot_predictions}
+
+ggplot(testing_data, aes(ten_km_contribution, prediction)) +
+  geom_point() + xlim(0,0.04)
+```
+
