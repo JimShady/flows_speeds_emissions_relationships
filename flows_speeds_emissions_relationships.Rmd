@@ -171,6 +171,8 @@ emissions_grids              <- emissions_grids[order(emissions_grids$toid),]
 
 ## Link emissions, to traffic, to grids
 
+THIS BIT NEEDS DOING AGAIN. NEED TO AGGREGATE UP TO DOT REF.
+
 ```{r joining_grids_to_emissions_to_traffic}
 
 all_data                <- merge(emissions_grids, grid_traffic, by.x = c('toid', 'easting', 'northing'), by.y = c('toid', 'easting', 'northing'))
@@ -285,7 +287,14 @@ result <- result[result$total_emissions > 0,]
 
 ## Exploring data relationships
 
-Look at relationships between the variables and the emissions in the training data
+### Histogram of 10km emission contributions
+
+```{r emissions_histogram, fig.width=12, }
+
+ggplot(result, aes(ten_km_contribution)) +
+  geom_histogram(bins = 60)
+
+```
 
 ### Total vehicles v. emission contribution
 ```{r ggplot_of_variables1, fig.width=10, echo=F}
@@ -300,7 +309,7 @@ ggplot(result, aes(total_vehicles, ten_km_contribution)) +
 ```
 
 ### Light vehicles v. emission contribution
-```{r ggplot_of_variables2, fig.width=12, fig.cap="Emission contribution to 10km grid per TOID (exact cut) against total light vehicle on that TOID (exact cut)", echo=F}
+```{r ggplot_of_variables2, fig.width=12, echo=F}
 
 ggplot(result, aes(total_light, ten_km_contribution)) +
   geom_point(alpha = 0.2, colour = 'blue', fill = 'blue', size=0.5) +
