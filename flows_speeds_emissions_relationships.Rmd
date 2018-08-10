@@ -32,7 +32,7 @@ require(spatialEco)
 require(sp)
 ```
 
-### Grid points
+## Import Grid points
 
 Import points which represent 1km grid centroids of a grid covering London
 
@@ -51,7 +51,7 @@ This gives a table of **`r nrow(grid)` rows**, show below.
 kable(head(grid)) %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F, position = "left")
 ```
 
-### Traffic flows
+## Import Traffic flows
 
 Now import traffic flows by toid and grid exact cut, and edit/clean to get what we need
 
@@ -82,7 +82,7 @@ This gives a table of **`r nrow(traffic_flows)` rows**, show below.
 kable(head(traffic_flows)) %>%  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F, position = "left")
 ```
 
-### Emissions
+## Import Emissions
 
 Import emissions by toid and grid exact cut
 
@@ -132,7 +132,7 @@ This gives a table of **`r nrow(emissions)` rows**, show below.
 kable(head(emissions)) %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F, position = "left")
 ```
 
-### Joining traffic to grids
+## Link traffic flows to grids
 
 ```{r joining_traffic_to_grid}
 
@@ -159,7 +159,7 @@ Now looks like this
 kable(head(grid_traffic[order(grid_traffic$toid),])) %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F, position = "left")
 ```
 
-### Joining emissions to grids
+## Link emissions to grids
 
 ```{r joining_grids_to_emissions}
 
@@ -169,7 +169,7 @@ emissions_grids              <- emissions_grids[order(emissions_grids$toid),]
 
 ```
 
-### Joining grids to emissions to traffic
+## Link emissions, to traffic, to grids
 
 ```{r joining_grids_to_emissions_to_traffic}
 
@@ -185,7 +185,7 @@ Example of final data for NO2 and one grid cell
 kable(all_data[all_data$easting == 512500 & all_data$northing == 198500 & all_data$pollutant == 'no2',]) %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F, position = "left")
 ```
 
-### Aggregate 1km grids to 10km grids of total emissions
+## Aggregate 1km grids to 10km
 
 First sum emissions by the 1km, to 1km grid, and create raster stacks from them
 
@@ -244,6 +244,7 @@ ten_km_emissions_polygons <- rasterToPolygons(ten_km_emissions_raster)
 mapview(ten_km_emissions_polygons, map.types = 'OpenStreetMap')
 ```
 
+## Link TOIDS to 10km grids
 Turn the originl data into points, so that can use these to extract the values from the 10km polygons
 ```{r map_originals_to_points}
 
@@ -251,6 +252,8 @@ coordinates(all_data)           <- ~ easting + northing
 proj4string(all_data)           <- CRS(ukgrid)
 
 ```
+
+## Calculate each TOIDS contribution 
 
 This code now looks at each road, sees which overall 10km grid it is in, and then divides each pollutant by the total of that pollutant in the square. Puts the result into 'ten_km_contribution' variable.
 
@@ -280,7 +283,71 @@ result <- result[result$total_emissions > 0,]
 
 ```
 
-### Regression
+## Exploring data relationships
+
+Look at relationships between the variables and the emissions in the training data
+
+### Total vehicles v. emission contribution
+```{r ggplot_of_variables1, fig.width=10, echo=F}
+
+ggplot(result, aes(total_vehicles, ten_km_contribution)) +
+  geom_point(alpha = 0.2, colour = 'blue', fill = 'blue', size=0.5) +
+  facet_wrap(.~pollutant, scales = 'free') +
+  geom_smooth(colour = 'red', method = 'lm') +
+  xlab('Number of vehicles (all)') +
+  ylab('Contribution to 10km grid emissions')
+
+```
+
+### Light vehicles v. emission contribution
+```{r ggplot_of_variables2, fig.width=12, fig.cap="Emission contribution to 10km grid per TOID (exact cut) against total light vehicle on that TOID (exact cut)", echo=F}
+
+ggplot(result, aes(total_light, ten_km_contribution)) +
+  geom_point(alpha = 0.2, colour = 'blue', fill = 'blue', size=0.5) +
+  facet_wrap(.~pollutant, scales = 'free') +
+  geom_smooth(colour = 'red', method = 'lm') +
+  xlab('Number of light vehicles') +
+  ylab('Contribution to 10km grid emissions')
+
+```
+
+### Heavy vehicles v. emission contribution
+```{r ggplot_of_variables3, fig.width=12, echo=F}
+
+ggplot(result, aes(total_heavy, ten_km_contribution)) +
+  geom_point(alpha = 0.2, colour = 'blue', fill = 'blue', size=0.5) +
+  facet_wrap(.~pollutant, scales = 'free') +
+  geom_smooth(colour = 'red', method = 'lm') +
+  xlab('Number of heavy vehicles') +
+  ylab('Contribution to 10km grid emissions')
+
+```
+
+### Speed v. emission contribution
+```{r ggplot_of_variables4, fig.width=12, echo=F}
+
+ggplot(result, aes(speed, ten_km_contribution)) +
+  geom_point(alpha = 0.2, colour = 'blue', fill = 'blue', size=0.5) +
+  facet_wrap(.~pollutant, scales = 'free') +
+  geom_smooth(colour = 'red', method = 'lm') +
+  xlab('Speed of vehicles') +
+  ylab('Contribution to 10km grid emissions')
+
+```
+
+### Length v. emission contribution**
+```{r ggplot_of_variables5, fig.width=12, echo=F}
+
+ggplot(result, aes(length, ten_km_contribution)) +
+  geom_point(alpha = 0.2, colour = 'blue', fill = 'blue', size=0.5) +
+  facet_wrap(.~pollutant, scales = 'free') +
+  geom_smooth(colour = 'red', method = 'lm') +
+  xlab('Length of toid') +
+  ylab('Contribution to 10km grid emissions')
+
+```
+
+## Create training and testing data
 
 Take 80% of the data as a training data set
 
@@ -300,70 +367,7 @@ testing_data <- result[-training_index,]
 
 ```
 
-Look at relationships between the variables and the emissions in the training data
-
-**Total vehicles v. emission contribution**
-```{r ggplot_of_variables1, fig.width=10, echo=F}
-
-ggplot(training_data, aes(total_vehicles, ten_km_contribution)) +
-  geom_point(alpha = 0.2, colour = 'blue', fill = 'blue', size=0.5) +
-  facet_wrap(.~pollutant, scales = 'free') +
-  geom_smooth(colour = 'red', method = 'lm') +
-  xlab('Number of vehicles (all)') +
-  ylab('Contribution to 10km grid emissions')
-
-```
-
-**Light vehicles v. emission contribution**
-```{r ggplot_of_variables2, fig.width=12, fig.cap="Emission contribution to 10km grid per TOID (exact cut) against total light vehicle on that TOID (exact cut)", echo=F}
-
-ggplot(training_data, aes(total_light, ten_km_contribution)) +
-  geom_point(alpha = 0.2, colour = 'blue', fill = 'blue', size=0.5) +
-  facet_wrap(.~pollutant, scales = 'free') +
-  geom_smooth(colour = 'red', method = 'lm') +
-  xlab('Number of light vehicles') +
-  ylab('Contribution to 10km grid emissions')
-
-```
-
-**Heavy vehicles v. emission contribution**
-```{r ggplot_of_variables3, fig.width=12, echo=F}
-
-ggplot(training_data, aes(total_heavy, ten_km_contribution)) +
-  geom_point(alpha = 0.2, colour = 'blue', fill = 'blue', size=0.5) +
-  facet_wrap(.~pollutant, scales = 'free') +
-  geom_smooth(colour = 'red', method = 'lm') +
-  xlab('Number of heavy vehicles') +
-  ylab('Contribution to 10km grid emissions')
-
-```
-
-**Speed v. emission contribution**
-```{r ggplot_of_variables4, fig.width=12, echo=F}
-
-ggplot(training_data, aes(speed, ten_km_contribution)) +
-  geom_point(alpha = 0.2, colour = 'blue', fill = 'blue', size=0.5) +
-  facet_wrap(.~pollutant, scales = 'free') +
-  geom_smooth(colour = 'red', method = 'lm') +
-  xlab('Speed of vehicles') +
-  ylab('Contribution to 10km grid emissions')
-
-```
-
-**Length v. emission contribution**
-```{r ggplot_of_variables5, fig.width=12, echo=F}
-
-ggplot(training_data, aes(length, ten_km_contribution)) +
-  geom_point(alpha = 0.2, colour = 'blue', fill = 'blue', size=0.5) +
-  facet_wrap(.~pollutant, scales = 'free') +
-  geom_smooth(colour = 'red', method = 'lm') +
-  xlab('Length of toid') +
-  ylab('Contribution to 10km grid emissions')
-
-```
-
-
-#### Make linear regression
+## Make linear regression model
 
 Make a liner regression model using the training data
 
@@ -399,6 +403,7 @@ model_results$total_heavy_coef  <- as.numeric(model_results$total_heavy_coef)
 
 ```
 
+## Apply linear regression model
 Now use the regression equation on the testing 20% data
 
 ```{r test_regression}
@@ -415,6 +420,7 @@ for (i in 1:length(sources)) {
 
 ```
 
+## Results 
 Plot the prediction against the actuals for the testing 20%
 
 ```{r plot_predictions, fig.width=12, fig.height = 40, echo=F}
@@ -423,4 +429,3 @@ ggplot(testing_data, aes(ten_km_contribution, prediction)) +
   geom_point() +
   facet_wrap(.~pollutant, scales = 'free', ncol = 1)
 ```
-
