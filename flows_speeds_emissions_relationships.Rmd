@@ -123,7 +123,6 @@ emissions$pollutant         <- tolower(emissions$pollutant)
 emissions <- aggregate(total_emissions ~ gridid + toid + grid_exactcut_id + dotref + length + pollutant, data=emissions, FUN=sum)
 
 
-
 ```
 
 This gives a table of **`r nrow(emissions)` rows**, show below.
@@ -171,8 +170,6 @@ emissions_grids              <- emissions_grids[order(emissions_grids$toid),]
 
 ## Link emissions, to traffic, to grids
 
-THIS BIT NEEDS DOING AGAIN. NEED TO AGGREGATE UP TO DOT REF.
-
 ```{r joining_grids_to_emissions_to_traffic}
 
 all_data                <- merge(emissions_grids, grid_traffic, by.x = c('toid', 'easting', 'northing'), by.y = c('toid', 'easting', 'northing'))
@@ -181,7 +178,7 @@ rm(grid, grid_traffic, emissions_grids,drop)
 
 ```
 
-Example of final data for NO2 and one grid cell
+Example of final data for NO2 and one grid
 
 ```{r, echo=F}
 kable(all_data[all_data$easting == 512500 & all_data$northing == 198500 & all_data$pollutant == 'no2',]) %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F, position = "left")
@@ -282,6 +279,14 @@ Some toid exact cuts (`r nrow(result[result$total_emissions > 0,])`) have zero e
 ```{r remove_zero_roads}
 
 result <- result[result$total_emissions > 0,]
+
+```
+
+```{r aggregate_to_dotref}
+
+result <- merge(aggregate(data = result, cbind(length, total_emissions, ten_km_contribution) ~ dotref + pollutant, sum),
+          aggregate(data = result, cbind(speed, total_vehicles, total_light, total_heavy) ~ dotref + pollutant, mean),
+          by = c('dotref', 'pollutant'))
 
 ```
 
@@ -411,6 +416,12 @@ model_results$total_light_coef  <- as.numeric(model_results$total_light_coef)
 model_results$total_heavy_coef  <- as.numeric(model_results$total_heavy_coef)
 
 ```
+
+## Model result
+* `r toupper(sources[1])` adjusted R-squared: `r summary(model_results_list[[1]])$adj.r.squared`
+* `r toupper(sources[2])` adjusted R-squared: `r summary(model_results_list[[2]])$adj.r.squared`
+* `r toupper(sources[3])` adjusted R-squared: `r summary(model_results_list[[3]])$adj.r.squared` 
+* `r toupper(sources[4])` adjusted R-squared: `r summary(model_results_list[[4]])$adj.r.squared`
 
 ## Apply linear regression model
 Now use the regression equation on the testing 20% data
