@@ -4,7 +4,7 @@ author: "James David Smith"
 output:
   html_document:
     toc: true
-    toc_float: true
+    #toc_float: true
     toc_depth: 3
 ---
 
@@ -30,6 +30,7 @@ library(reshape2)
 library(mapview)
 require(spatialEco)
 require(sp)
+library(plotly)
 ```
 
 ## Import Grid points
@@ -82,6 +83,20 @@ This gives a table of **`r nrow(traffic_flows)` rows**, show below.
 kable(head(traffic_flows)) %>%  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F, position = "left")
 ```
 
+## Import TOID information
+
+```{r import_toid_info}
+
+road_info                    <- read.csv('erg_roads_info.csv')
+
+names(road_info)             <- tolower(names(road_info))
+
+road_info                    <- road_info[,c('toid', 'desc_term')]
+
+road_info$toid               <- as.character(road_info$toid)
+
+```
+
 ## Import Emissions
 
 Import emissions by toid and grid exact cut
@@ -131,6 +146,15 @@ This gives a table of **`r nrow(emissions)` rows**, show below.
 kable(head(emissions)) %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F, position = "left")
 ```
 
+## Link traffic flows to road info
+
+```{r link_flows_to_road_info}
+
+traffic_flows             <- merge(traffic_flows, road_info, by.x = 'toid', by.y = 'toid')
+rm(road_info)
+
+```
+
 ## Link traffic flows to grids
 
 ```{r joining_traffic_to_grid}
@@ -149,7 +173,7 @@ kable(head(grid_traffic)) %>% kable_styling(bootstrap_options = c("striped", "ho
 Now take the mean traffic flow, on each toid, by grid square (using easting and northing)
 
 ```{r mean_traffic_by_toid_grid}
-grid_traffic <- aggregate(data = grid_traffic, FUN=mean, cbind(speed, total_vehicles, total_light, total_heavy)~ easting+northing+toid)
+grid_traffic <- aggregate(data = grid_traffic, FUN=mean, cbind(speed, total_vehicles, total_light, total_heavy)~ easting+northing+toid+desc_term)
 ```
 
 Now looks like this
@@ -286,9 +310,10 @@ Now before create a model to calculate a regression between the variables and th
 
 ```{r aggregate_to_dotref}
 
-result <- merge(aggregate(data = result, cbind(length, total_emissions, ten_km_contribution) ~ dotref + pollutant, sum),
-          aggregate(data = result, cbind(speed, total_vehicles, total_light, total_heavy) ~ dotref + pollutant, mean),
-          by = c('dotref', 'pollutant'))
+result <- merge(
+          aggregate(data = result, cbind(length, total_emissions, ten_km_contribution) ~ dotref + desc_term + pollutant, sum),
+          aggregate(data = result, cbind(speed, total_vehicles, total_light, total_heavy) ~ dotref + desc_term + pollutant, mean),
+          by = c('dotref', 'pollutant', 'desc_term'))
 
 ```
 
@@ -355,7 +380,7 @@ ggplot(result, aes(speed, ten_km_contribution)) +
 
 ```
 
-### Length v. emission contribution**
+### Length v. emission contribution
 ```{r ggplot_of_variables5, fig.width=12, echo=F}
 
 ggplot(result, aes(length, ten_km_contribution)) +
@@ -364,6 +389,14 @@ ggplot(result, aes(length, ten_km_contribution)) +
   geom_smooth(colour = 'red', method = 'lm') +
   xlab('Length of toid') +
   ylab('Contribution to 10km grid emissions')
+
+```
+
+## Remove roads of very small number
+
+```{r remove_tiny_roads}
+
+result <- result[!(result$desc_term %in% c('Alley', 'Private Road - Publicly Accessible', 'Pedestrianised Street')),]
 
 ```
 
@@ -391,43 +424,28 @@ testing_data <- result[-training_index,]
 
 Make a liner regression model using the training data
 
-```{r make_regressions}
+```{r make_regression_models}
 
-model_results <- data.frame(pollutant = NA,
-                            intercept = as.numeric(''),
-                            length_coef = as.numeric(''),
-                            speed_coef = as.numeric(''),
-                            total_light_coef = as.numeric(''),
-                            total_heavy_coef = as.numeric(''),
-                            stringsAsFactors = F)
-
-model_results_list <- list()
+models <- list()
 
 for (i in 1:length(sources)) {
   
-  model <- lm(ten_km_contribution ~ length + speed + total_light + total_heavy,
+  model <- lm(ten_km_contribution ~ length + speed + total_light + total_heavy + desc_term,
              data=training_data[training_data$pollutant == sources[i],])
 
-  model_results_list[[i]] <- model
-  
-  model_results[i,] <- c(sources[i], as.numeric(coef(model)[1]), as.numeric(coef(model)[2]), as.numeric(coef(model)[3]), as.numeric(coef(model)[4]), as.numeric(coef(model)[5]))
+  models[[i]] <- model
   
   rm(model)
 }
 
-model_results$intercept         <- as.numeric(model_results$intercept)
-model_results$length_coef       <- as.numeric(model_results$length_coef)
-model_results$speed_coef        <- as.numeric(model_results$speed_coef)
-model_results$total_light_coef  <- as.numeric(model_results$total_light_coef)
-model_results$total_heavy_coef  <- as.numeric(model_results$total_heavy_coef)
 
 ```
 
 ## Model result
-* `r toupper(sources[1])` adjusted R-squared: `r summary(model_results_list[[1]])$adj.r.squared`
-* `r toupper(sources[2])` adjusted R-squared: `r summary(model_results_list[[2]])$adj.r.squared`
-* `r toupper(sources[3])` adjusted R-squared: `r summary(model_results_list[[3]])$adj.r.squared` 
-* `r toupper(sources[4])` adjusted R-squared: `r summary(model_results_list[[4]])$adj.r.squared`
+* `r toupper(sources[1])` adjusted R-squared: `r summary(models[[1]])$adj.r.squared`
+* `r toupper(sources[2])` adjusted R-squared: `r summary(models[[2]])$adj.r.squared`
+* `r toupper(sources[3])` adjusted R-squared: `r summary(models[[3]])$adj.r.squared` 
+* `r toupper(sources[4])` adjusted R-squared: `r summary(models[[4]])$adj.r.squared`
 
 ## Apply linear regression model
 Now use the regression equation on the testing 20% data
@@ -437,11 +455,7 @@ Now use the regression equation on the testing 20% data
 testing_data$prediction <- NA
 
 for (i in 1:length(sources)) {
-  testing_data[testing_data$pollutant == sources[i],'prediction'] <-    model_results[model_results$pollutant == sources[i],]$intercept+(
-                                                                  (testing_data[testing_data$pollutant == sources[i],]$length      * model_results[model_results$pollutant == sources[i],]$length_coef) +
-                                                                  (testing_data[testing_data$pollutant == sources[i],]$speed       * model_results[model_results$pollutant == sources[i],]$speed_coef) +
-                                                                  (testing_data[testing_data$pollutant == sources[i],]$total_light * model_results[model_results$pollutant == sources[i],]$total_light_coef) +
-                                                                  (testing_data[testing_data$pollutant == sources[i],]$total_heavy * model_results[model_results$pollutant == sources[i],]$total_heavy_coef))
+  testing_data[testing_data$pollutant == sources[i],'prediction'] <-   predict(models[[i]], testing_data[testing_data$pollutant == sources[i],])
 }
 
 ```
@@ -449,9 +463,33 @@ for (i in 1:length(sources)) {
 ## Results 
 Plot the prediction against the actuals for the testing 20%
 
-```{r plot_predictions, fig.width=7.5, fig.height = 25, echo=F}
+```{r plot_predictions, echo=F}
 
-ggplot(testing_data, aes(ten_km_contribution, prediction)) +
-  geom_point() +
-  facet_wrap(.~pollutant, scales = 'free', ncol = 1) 
+no2 <- ggplot(testing_data, aes(ten_km_contribution, prediction, colour=desc_term)) +
+  geom_point(size=1.5, alpha=0.5) +
+  theme(legend.position="bottom",
+        legend.title = element_blank())
+
+nox <- ggplot(testing_data, aes(ten_km_contribution, prediction, colour=desc_term)) +
+ geom_point(size=1.5, alpha=0.5) +
+  theme(legend.position="bottom",
+        legend.title = element_blank())
+
+pm10 <- ggplot(testing_data, aes(ten_km_contribution, prediction, colour=desc_term)) +
+ geom_point(size=1.5, alpha=0.5) +
+  theme(legend.position="bottom",
+        legend.title = element_blank())
+
+pm25 <- ggplot(testing_data, aes(ten_km_contribution, prediction, colour=desc_term)) +
+ geom_point(size=1.5, alpha=0.5) +
+  theme(legend.position="bottom",
+        legend.title = element_blank())
+ 
+ggplotly(no2)
+
+ggplotly(nox)
+
+ggplotly(pm10)
+
+ggplotly(pm25)
 ```
