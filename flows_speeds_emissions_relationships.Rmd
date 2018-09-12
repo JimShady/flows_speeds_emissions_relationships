@@ -289,8 +289,11 @@ result                                                  <- data.frame(result)
 result$ten_km_contribution                              <- NA
 
 result[result$pollutant == 'no2',]$ten_km_contribution    <- result[result$pollutant == 'no2',]$total_emissions    / result[result$pollutant == 'no2',]$no2
+
 result[result$pollutant == 'nox',]$ten_km_contribution    <- result[result$pollutant == 'nox',]$total_emissions    / result[result$pollutant == 'nox',]$nox
+
 result[result$pollutant == 'pm10',]$ten_km_contribution   <- result[result$pollutant == 'pm10',]$total_emissions   / result[result$pollutant == 'pm10',]$pm10
+
 result[result$pollutant == 'pm25',]$ten_km_contribution   <- result[result$pollutant == 'pm25',]$total_emissions   / result[result$pollutant == 'pm25',]$pm25
 
 rm(all_data)
@@ -428,27 +431,41 @@ Make a liner regression model using the training data
 
 models <- list()
 
+counter <- 1
+
+road_types <- unique(training_data$desc_term)
+
+model_results <- data.frame(road_type = NA,
+                            pollutant = NA,
+                            rsquared = NA, stringsAsFactors = F)
+
 for (i in 1:length(sources)) {
   
-  model <- lm(ten_km_contribution ~ length + speed + total_light + total_heavy + desc_term,
-             data=training_data[training_data$pollutant == sources[i],])
-
-  models[[i]] <- model
+  for (j in 1:length(road_types)) {
   
+  model <- lm(ten_km_contribution ~ length + speed + total_light + total_heavy,
+             data=training_data[training_data$pollutant == sources[i] & training_data$desc_term == road_types[j],])
+
+  models[[counter]] <- model
+  
+  model_results[counter,] <- c(road_types[j], sources[i],  round(summary(models[[counter]])$adj.r.squared,3) )
+  
+  counter <- counter + 1
   rm(model)
+  
+  }
 }
 
 
 ```
 
 ## Model result
-* `r toupper(sources[1])` adjusted R-squared: `r summary(models[[1]])$adj.r.squared`
-* `r toupper(sources[2])` adjusted R-squared: `r summary(models[[2]])$adj.r.squared`
-* `r toupper(sources[3])` adjusted R-squared: `r summary(models[[3]])$adj.r.squared` 
-* `r toupper(sources[4])` adjusted R-squared: `r summary(models[[4]])$adj.r.squared`
+```{r model_results_table}
+kable(model_results)%>% kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F, position = "left")
+```
 
 ## Apply linear regression model
-Now use the regression equation on the testing 20% data
+Now use the regression equation on the testing 20% data FIX THIS BIT
 
 ```{r test_regression}
 
