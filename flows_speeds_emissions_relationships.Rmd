@@ -433,7 +433,7 @@ models <- list()
 
 counter <- 1
 
-road_types <- unique(training_data$desc_term)
+road_types <- unique(as.character(training_data$desc_term))
 
 model_results <- data.frame(road_type = NA,
                             pollutant = NA,
@@ -472,8 +472,12 @@ Now use the regression equation on the testing 20% data FIX THIS BIT
 testing_data$prediction <- NA
 
 for (i in 1:length(sources)) {
-  testing_data[testing_data$pollutant == sources[i],'prediction'] <-   predict(models[[i]], testing_data[testing_data$pollutant == sources[i],])
-}
+  
+  for (j in 1:length(road_types)) {
+    
+  testing_data[testing_data$pollutant == sources[i] & testing_data$desc_term == road_types[j],'prediction'] <-   predict(models[[i]], testing_data[testing_data$pollutant == sources[i] & testing_data$desc_term == road_types[j],])
+                                  }
+                            }
 
 ```
 
@@ -485,28 +489,46 @@ Plot the prediction against the actuals for the testing 20%
 no2 <- ggplot(testing_data, aes(ten_km_contribution, prediction, colour=desc_term)) +
   geom_point(size=1.5, alpha=0.5) +
   theme(legend.position="bottom",
-        legend.title = element_blank())
+        legend.title = element_blank()) +
+  facet_wrap(.~desc_term, scales='free')
 
 nox <- ggplot(testing_data, aes(ten_km_contribution, prediction, colour=desc_term)) +
  geom_point(size=1.5, alpha=0.5) +
   theme(legend.position="bottom",
-        legend.title = element_blank())
+        legend.title = element_blank()) +
+  facet_wrap(.~desc_term, scales='free')
 
 pm10 <- ggplot(testing_data, aes(ten_km_contribution, prediction, colour=desc_term)) +
  geom_point(size=1.5, alpha=0.5) +
   theme(legend.position="bottom",
-        legend.title = element_blank())
+        legend.title = element_blank()) +
+  facet_wrap(.~desc_term, scales='free')
 
 pm25 <- ggplot(testing_data, aes(ten_km_contribution, prediction, colour=desc_term)) +
  geom_point(size=1.5, alpha=0.5) +
   theme(legend.position="bottom",
-        legend.title = element_blank())
- 
-ggplotly(no2)
+        legend.title = element_blank()) +
+  facet_wrap(.~desc_term, scales='free')
+```
 
-ggplotly(nox)
+### NO2
 
-ggplotly(pm10)
+```{r}
+no2
+```
 
-ggplotly(pm25)
+### NOX
+
+```{r}
+nox
+```
+
+### PM10
+```{r}
+pm10
+```
+
+### PM2.5
+```{r}
+pm25
 ```
