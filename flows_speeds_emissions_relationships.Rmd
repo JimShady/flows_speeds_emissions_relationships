@@ -31,6 +31,7 @@ library(mapview)
 require(spatialEco)
 require(sp)
 library(plotly)
+library(MASS)
 ```
 
 ## Import Grid points
@@ -116,7 +117,7 @@ emissions$toid                <- as.character(emissions$toid)
 drop                          <- c('motorcycle', 'taxi', 'car', 'busandcoach', 'lgv', 'rigid', 'artic', 'rigid2axle', 'rigid3axle', 'rigid4axle', 'artic3axle', 'artic5axle', 'artic6axle')
 emissions                     <- emissions[, !(names(emissions) %in% drop)]
 
-emissions                     <- emissions[!(emissions$pollutant %in% c('TB_PM10_SW', 'TB_PM25_SW')),]
+emissions                     <- emissions[!(emissions$pollutant %in% c('TB_PM10_SW', 'TB_PM25_SW')),]]
 
 ```
 
@@ -282,6 +283,8 @@ This code now looks at each road, sees which overall 10km grid it is in, and the
 
 ```{r get_point_polygon_and_divide}
 
+ten_km_emissions_polygons$id                            <- row.names(ten_km_emissions_polygons)
+
 result                                                  <- point.in.poly(all_data, ten_km_emissions_polygons)
 
 result                                                  <- data.frame(result)
@@ -313,10 +316,10 @@ Now before create a model to calculate a regression between the variables and th
 
 ```{r aggregate_to_dotref}
 
-result <- merge(
-          aggregate(data = result, cbind(length, total_emissions, ten_km_contribution) ~ dotref + desc_term + pollutant, sum),
-          aggregate(data = result, cbind(speed, total_vehicles, total_light, total_heavy) ~ dotref + desc_term + pollutant, mean),
-          by = c('dotref', 'pollutant', 'desc_term'))
+#result <- merge(
+#          aggregate(data = result, cbind(length, total_emissions, ten_km_contribution) ~ dotref + desc_term + pollutant, sum),
+#          aggregate(data = result, cbind(speed, total_vehicles, total_light, total_heavy) ~ dotref + desc_term + pollutant, mean),
+#          by = c('dotref', 'pollutant', 'desc_term'))
 
 ```
 
@@ -435,25 +438,24 @@ counter <- 1
 
 road_types <- unique(as.character(training_data$desc_term))
 
-model_results <- data.frame(road_type = NA,
-                            pollutant = NA,
+model_results <- data.frame(pollutant = NA,
                             rsquared = NA, stringsAsFactors = F)
 
 for (i in 1:length(sources)) {
   
-  for (j in 1:length(road_types)) {
+  model <- lm(total_emissions ~ total_vehicles*speed*length + desc_term,
+             data=training_data[training_data$pollutant == sources[i],])
   
-  model <- lm(ten_km_contribution ~ length + speed + total_light + total_heavy,
-             data=training_data[training_data$pollutant == sources[i] & training_data$desc_term == road_types[j],])
+ # model <- lm(total_emissions ~ total_vehicles*speed*length,
+ #           data=training_data[training_data$pollutant == sources[i],])
 
   models[[counter]] <- model
   
-  model_results[counter,] <- c(road_types[j], sources[i],  round(summary(models[[counter]])$adj.r.squared,3) )
+  model_results[counter,] <- c(sources[i],  round(summary(models[[counter]])$adj.r.squared,5) )
   
   counter <- counter + 1
   rm(model)
-  
-  }
+
 }
 
 
@@ -472,12 +474,8 @@ Now use the regression equation on the testing 20% data FIX THIS BIT
 testing_data$prediction <- NA
 
 for (i in 1:length(sources)) {
-  
-  for (j in 1:length(road_types)) {
-    
-  testing_data[testing_data$pollutant == sources[i] & testing_data$desc_term == road_types[j],'prediction'] <-   predict(models[[i]], testing_data[testing_data$pollutant == sources[i] & testing_data$desc_term == road_types[j],])
-                                  }
-                            }
+  testing_data[testing_data$pollutant == sources[i],'prediction'] <-   predict(models[[i]], testing_data[testing_data$pollutant == sources[i],])
+}
 
 ```
 
@@ -486,29 +484,33 @@ Plot the prediction against the actuals for the testing 20%
 
 ```{r plot_predictions, echo=F}
 
-no2 <- ggplot(testing_data, aes(ten_km_contribution, prediction, colour=desc_term)) +
-  geom_point(size=1.5, alpha=0.5) +
+no2 <- ggplot(testing_data[testing_data$pollutant == 'no2',], aes(total_emissions, prediction)) +
+  geom_point(size=2, alpha=0.3, aes(colour=desc_term, stroke=0)) +
   theme(legend.position="bottom",
         legend.title = element_blank()) +
-  facet_wrap(.~desc_term, scales='free')
+  facet_wrap(.~desc_term, scales='free') +
+  geom_abline(slope=1, intercept=0)
 
-nox <- ggplot(testing_data, aes(ten_km_contribution, prediction, colour=desc_term)) +
- geom_point(size=1.5, alpha=0.5) +
+nox <- ggplot(testing_data[testing_data$pollutant == 'nox',], aes(total_emissions, prediction, colour=desc_term)) +
+  geom_point(size=2, alpha=0.3, aes(colour=desc_term, stroke=0)) +
   theme(legend.position="bottom",
         legend.title = element_blank()) +
-  facet_wrap(.~desc_term, scales='free')
+  facet_wrap(.~desc_term, scales='free') +
+  geom_abline(slope=1, intercept=0)
 
-pm10 <- ggplot(testing_data, aes(ten_km_contribution, prediction, colour=desc_term)) +
- geom_point(size=1.5, alpha=0.5) +
+pm10 <- ggplot(testing_data[testing_data$pollutant == 'pm10',], aes(total_emissions, prediction, colour=desc_term)) +
+  geom_point(size=2, alpha=0.3, aes(colour=desc_term, stroke=0)) +
   theme(legend.position="bottom",
         legend.title = element_blank()) +
-  facet_wrap(.~desc_term, scales='free')
+  facet_wrap(.~desc_term, scales='free') +
+  geom_abline(slope=1, intercept=0)
 
-pm25 <- ggplot(testing_data, aes(ten_km_contribution, prediction, colour=desc_term)) +
- geom_point(size=1.5, alpha=0.5) +
+pm25 <- ggplot(testing_data[testing_data$pollutant == 'pm25',], aes(total_emissions, prediction, colour=desc_term)) +
+  geom_point(size=2, alpha=0.3, aes(colour=desc_term, stroke=0)) +
   theme(legend.position="bottom",
         legend.title = element_blank()) +
-  facet_wrap(.~desc_term, scales='free')
+  facet_wrap(.~desc_term, scales='free') +
+  geom_abline(slope=1, intercept=0)
 ```
 
 ### NO2
