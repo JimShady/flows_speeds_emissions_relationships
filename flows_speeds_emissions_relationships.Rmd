@@ -32,6 +32,7 @@ require(spatialEco)
 require(sp)
 library(plotly)
 library(MASS)
+library(openair)
 ```
 
 ## Import Grid points
@@ -110,6 +111,10 @@ names(emissions)              <- tolower(names(emissions))
 drop                          <- c('emissions', 'year', 'petrolcar', 'dieselcar', 'petrollgv', 'diesellgv', 'ltbus', 'coach', 'electriccar', 'electriclgv')
 emissions                     <- emissions[, !(names(emissions) %in% drop)]
 
+emissions$total_light_emissions     <- emissions$motorcycle + emissions$taxi + emissions$car
+
+emissions$total_heavy_emissions     <- emissions$busandcoach + emissions$lgv + emissions$rigid + emissions$artic + emissions$rigid2axle + emissions$rigid3axle + emissions$rigid4axle + emissions$artic3axle + emissions$artic5axle + emissions$artic6axle
+
 emissions$total_emissions     <- emissions$motorcycle + emissions$taxi + emissions$car + emissions$busandcoach + emissions$lgv + emissions$rigid + emissions$artic + emissions$rigid2axle + emissions$rigid3axle + emissions$rigid4axle + emissions$artic3axle + emissions$artic5axle + emissions$artic6axle
 
 emissions$toid                <- as.character(emissions$toid)
@@ -117,7 +122,7 @@ emissions$toid                <- as.character(emissions$toid)
 drop                          <- c('motorcycle', 'taxi', 'car', 'busandcoach', 'lgv', 'rigid', 'artic', 'rigid2axle', 'rigid3axle', 'rigid4axle', 'artic3axle', 'artic5axle', 'artic6axle')
 emissions                     <- emissions[, !(names(emissions) %in% drop)]
 
-emissions                     <- emissions[!(emissions$pollutant %in% c('TB_PM10_SW', 'TB_PM25_SW')),]]
+emissions                     <- emissions[!(emissions$pollutant %in% c('TB_PM10_SW', 'TB_PM25_SW')),]
 
 ```
 
@@ -136,7 +141,7 @@ emissions$dotref            <- as.character(emissions$dotref)
 
 emissions$pollutant         <- tolower(emissions$pollutant)
 
-emissions <- aggregate(total_emissions ~ gridid + toid + grid_exactcut_id + dotref + length + pollutant, data=emissions, FUN=sum)
+emissions <- aggregate(cbind(total_emissions, total_light_emissions, total_heavy_emissions) ~ gridid + toid + grid_exactcut_id + dotref + length + pollutant, data=emissions, FUN=sum)
 
 
 ```
@@ -315,7 +320,7 @@ result <- result[result$total_emissions > 0,]
 Now before create a model to calculate a regression between the variables and the emissions, aggregate from TOID exact cuts, up to DotRef. This means that we go from `r nrow(result[result$pollutant == 'no2',])` 'streets' .....
 
 ```{r aggregate_to_dotref}
-
+# Decided thsi wasn't needed
 #result <- merge(
 #          aggregate(data = result, cbind(length, total_emissions, ten_km_contribution) ~ dotref + desc_term + pollutant, sum),
 #          aggregate(data = result, cbind(speed, total_vehicles, total_light, total_heavy) ~ dotref + desc_term + pollutant, mean),
@@ -432,31 +437,47 @@ Make a liner regression model using the training data
 
 ```{r make_regression_models}
 
-models <- list()
+light_models <- list()
+heavy_models <- list()
 
-counter <- 1
+light_counter <- 1
+heavy_counter <- 1
 
-road_types <- unique(as.character(training_data$desc_term))
+models_counter <- 1
 
-model_results <- data.frame(pollutant = NA,
-                            rsquared = NA, stringsAsFactors = F)
+road_types      <- unique(as.character(training_data$desc_term))
+
+model_results <- data.frame(light_or_heavy = NA,
+                            pollutant = NA,
+                            rsquared = NA,
+                            stringsAsFactors = F)
 
 for (i in 1:length(sources)) {
   
-  model <- lm(total_emissions ~ total_vehicles*speed*length + desc_term,
+  light_model <- lm(total_light_emissions ~ total_light*speed*length + desc_term,
              data=training_data[training_data$pollutant == sources[i],])
   
- # model <- lm(total_emissions ~ total_vehicles*speed*length,
- #           data=training_data[training_data$pollutant == sources[i],])
-
-  models[[counter]] <- model
+  heavy_model <- lm(total_heavy_emissions ~ total_heavy*speed*length + desc_term,
+             data=training_data[training_data$pollutant == sources[i],])
   
-  model_results[counter,] <- c(sources[i],  round(summary(models[[counter]])$adj.r.squared,5) )
+  light_models[[light_counter]] <- light_model
   
-  counter <- counter + 1
-  rm(model)
+  heavy_models[[heavy_counter]] <- heavy_model
+  
+  model_results[models_counter,] <- c('light', sources[i],  round(summary(light_model)$adj.r.squared,5) )
+  
+  models_counter <- models_counter + 1
+  
+  model_results[models_counter,] <- c('heavy', sources[i],  round(summary(heavy_model)$adj.r.squared,5) )
+  
+  models_counter <- models_counter + 1
+  
+  light_counter <- light_counter + 1
+  heavy_counter <- heavy_counter + 1
 
 }
+
+rm(light_counter, heavy_counter, models_counter, light_model, heavy_model)
 
 
 ```
@@ -467,15 +488,22 @@ kable(model_results)%>% kable_styling(bootstrap_options = c("striped", "hover", 
 ```
 
 ## Apply linear regression model
-Now use the regression equation on the testing 20% data FIX THIS BIT
+Now use the regression equation on the testing 20% data
 
 ```{r test_regression}
 
-testing_data$prediction <- NA
+testing_data$light_emissions_prediction <- NA
+testing_data$heavy_emissions_prediction <- NA
 
 for (i in 1:length(sources)) {
-  testing_data[testing_data$pollutant == sources[i],'prediction'] <-   predict(models[[i]], testing_data[testing_data$pollutant == sources[i],])
-}
+  
+  testing_data[testing_data$pollutant == sources[i],'light_emissions_prediction'] <-   predict(light_models[[i]], testing_data[testing_data$pollutant == sources[i],])
+  
+  testing_data[testing_data$pollutant == sources[i],'heavy_emissions_prediction'] <-   predict(heavy_models[[i]], testing_data[testing_data$pollutant == sources[i],])
+
+  }
+
+testing_data$total_emissions_prediction <- testing_data$light_emissions_prediction + testing_data$heavy_emissions_prediction
 
 ```
 
@@ -484,28 +512,28 @@ Plot the prediction against the actuals for the testing 20%
 
 ```{r plot_predictions, echo=F}
 
-no2 <- ggplot(testing_data[testing_data$pollutant == 'no2',], aes(total_emissions, prediction)) +
+no2 <- ggplot(testing_data[testing_data$pollutant == 'no2',], aes(total_emissions, total_emissions_prediction, colour=desc_term)) +
   geom_point(size=2, alpha=0.3, aes(colour=desc_term, stroke=0)) +
   theme(legend.position="bottom",
         legend.title = element_blank()) +
   facet_wrap(.~desc_term, scales='free') +
   geom_abline(slope=1, intercept=0)
 
-nox <- ggplot(testing_data[testing_data$pollutant == 'nox',], aes(total_emissions, prediction, colour=desc_term)) +
+nox <- ggplot(testing_data[testing_data$pollutant == 'nox',], aes(total_emissions, total_emissions_prediction, colour=desc_term)) +
   geom_point(size=2, alpha=0.3, aes(colour=desc_term, stroke=0)) +
   theme(legend.position="bottom",
         legend.title = element_blank()) +
   facet_wrap(.~desc_term, scales='free') +
   geom_abline(slope=1, intercept=0)
 
-pm10 <- ggplot(testing_data[testing_data$pollutant == 'pm10',], aes(total_emissions, prediction, colour=desc_term)) +
+pm10 <- ggplot(testing_data[testing_data$pollutant == 'pm10',], aes(total_emissions, total_emissions_prediction, colour=desc_term)) +
   geom_point(size=2, alpha=0.3, aes(colour=desc_term, stroke=0)) +
   theme(legend.position="bottom",
         legend.title = element_blank()) +
   facet_wrap(.~desc_term, scales='free') +
   geom_abline(slope=1, intercept=0)
 
-pm25 <- ggplot(testing_data[testing_data$pollutant == 'pm25',], aes(total_emissions, prediction, colour=desc_term)) +
+pm25 <- ggplot(testing_data[testing_data$pollutant == 'pm25',], aes(total_emissions, total_emissions_prediction, colour=desc_term)) +
   geom_point(size=2, alpha=0.3, aes(colour=desc_term, stroke=0)) +
   theme(legend.position="bottom",
         legend.title = element_blank()) +
@@ -513,24 +541,210 @@ pm25 <- ggplot(testing_data[testing_data$pollutant == 'pm25',], aes(total_emissi
   geom_abline(slope=1, intercept=0)
 ```
 
-### NO2
-
-```{r}
+```{r} 
 no2
+
+modStats(testing_data[testing_data$pollutant == 'no2',], mod = 'total_emissions_prediction', obs = 'total_emissions')
 ```
 
-### NOX
+```{r} 
+nox 
 
-```{r}
-nox
+modStats(testing_data[testing_data$pollutant == 'nox',], mod = 'total_emissions_prediction', obs = 'total_emissions')
 ```
 
-### PM10
-```{r}
+```{r} 
 pm10
+
+modStats(testing_data[testing_data$pollutant == 'pm10',], mod = 'total_emissions_prediction', obs = 'total_emissions')
 ```
 
-### PM2.5
-```{r}
+```{r} 
 pm25
+
+modStats(testing_data[testing_data$pollutant == 'pm25',], mod = 'total_emissions_prediction', obs = 'total_emissions')
+```
+
+So this regression model (light_vehicles &ast; speed &ast; length + desc_term), gives us a way of estimating emissions on a road based on the total_vehicles, speed, length and type of road. Using this we can estimate the emissions in a 10km grid, then look at the EMEP emissions for that 10km, and scale our calculated emissions down or up. 
+
+Taking this model, let's see how it works on traffic and emissions for 2025.
+
+```{r import_grid_points_2025}
+
+grid        <- read.csv('X:/Projects/LAEI2013_TfL_Strategy/z_GridsForJames.csv')
+grid        <- grid[,c('GridIdEx', 'Easting', 'Northing')]
+
+names(grid) <- c('grid_exact_cut', 'easting', 'northing')
+
+###
+
+traffic_flows                 <- read.csv('X:/Projects/LAEI2013_TfL_Strategy/FilesForHerald4/TrafficFlows/Major_WithAdjustedIbus_AADT/z_AADT_ExactCut_WithIbus_v1201_2025.csv')
+names(traffic_flows)          <- tolower(names(traffic_flows))
+
+drop                          <- c('year', 'location_exactcut', 'boroughname_exactcut', 'tlrn', 'irr', 'motorwaynumber', 'petrolcar', 'dieselcar', 'electriccar', 'petrollgv', 'diesellgv', 'electriclgv', 'ltbus', 'coach')
+traffic_flows                 <- traffic_flows[, !(names(traffic_flows) %in% drop)]
+
+traffic_flows$toid            <- as.character(traffic_flows$toid)
+
+traffic_flows$total_vehicles  <- (traffic_flows$motorcycle + traffic_flows$taxi + traffic_flows$car + traffic_flows$busandcoach + traffic_flows$lgv + traffic_flows$rigid2axle + traffic_flows$rigid3axle + traffic_flows$rigid4axle +     traffic_flows$artic3axle + traffic_flows$artic5axle + traffic_flows$artic6axle)
+
+traffic_flows$total_light     <- (traffic_flows$motorcycle + traffic_flows$taxi + traffic_flows$car)
+
+traffic_flows$total_heavy     <- (traffic_flows$busandcoach + traffic_flows$lgv + traffic_flows$rigid2axle + traffic_flows$rigid3axle + traffic_flows$rigid4axle + traffic_flows$artic3axle + traffic_flows$artic5axle + traffic_flows$artic6axle)
+
+drop                          <- c('motorcycle', 'taxi', 'car', 'busandcoach', 'lgv', 'rigid2axle', 'rigid3axle', 'rigid4axle', 'artic3axle', 'artic5axle', 'artic6axle')
+traffic_flows                 <- traffic_flows[, !(names(traffic_flows) %in% drop)]
+
+###
+
+road_info                    <- read.csv('erg_roads_info.csv')
+
+names(road_info)             <- tolower(names(road_info))
+
+road_info                    <- road_info[,c('toid', 'desc_term')]
+
+road_info$toid               <- as.character(road_info$toid)
+
+####
+
+emissions                     <- read.csv('X:/Projects/LAEI2013_TfL_Strategy/FilesForHerald4/EmissionsByLink/INPUT_RESULTS_LAEI_ExactCutIntersect_Major_2025_LAEI_v12019.csv')
+names(emissions)              <- tolower(names(emissions))
+
+drop                          <- c('emissions', 'year', 'petrolcar', 'dieselcar', 'petrollgv', 'diesellgv', 'ltbus', 'coach', 'electriccar', 'electriclgv')
+emissions                     <- emissions[, !(names(emissions) %in% drop)]
+
+emissions$total_light_emissions     <- emissions$motorcycle + emissions$taxi + emissions$car
+
+emissions$total_heavy_emissions     <- emissions$busandcoach + emissions$lgv + emissions$rigid + emissions$artic + emissions$rigid2axle + emissions$rigid3axle + emissions$rigid4axle + emissions$artic3axle + emissions$artic5axle + emissions$artic6axle
+
+emissions$total_emissions     <- emissions$motorcycle + emissions$taxi + emissions$car + emissions$busandcoach + emissions$lgv + emissions$rigid + emissions$artic + emissions$rigid2axle + emissions$rigid3axle + emissions$rigid4axle + emissions$artic3axle + emissions$artic5axle + emissions$artic6axle
+
+emissions$toid                <- as.character(emissions$toid)
+
+drop                          <- c('motorcycle', 'taxi', 'car', 'busandcoach', 'lgv', 'rigid', 'artic', 'rigid2axle', 'rigid3axle', 'rigid4axle', 'artic3axle', 'artic5axle', 'artic6axle')
+emissions                     <- emissions[, !(names(emissions) %in% drop)]
+
+emissions                     <- emissions[!(emissions$pollutant %in% c('TB_PM10_SW', 'TB_PM25_SW')),]
+
+###
+
+emissions$pollutant           <- as.character(emissions$pollutant)
+
+emissions[grep('pm25', tolower(emissions$pollutant)),'pollutant'] <- 'pm25'
+emissions[grep('pm10', tolower(emissions$pollutant)),'pollutant'] <- 'pm10'
+
+emissions$gridid            <- as.character(emissions$gridid)
+emissions$grid_exactcut_id  <- as.character(emissions$grid_exactcut_id)
+emissions$dotref            <- as.character(emissions$dotref)
+
+emissions$pollutant         <- tolower(emissions$pollutant)
+
+emissions <- aggregate(cbind(total_emissions, total_light_emissions, total_heavy_emissions) ~ gridid + toid + grid_exactcut_id + dotref + length + pollutant, data=emissions, FUN=sum)
+
+emissions <- emissions[emissions$total_emissions > 0,]
+
+##
+
+traffic_flows             <- merge(traffic_flows, road_info, by.x = 'toid', by.y = 'toid')
+rm(road_info)
+
+##
+
+grid_traffic              <- merge(traffic_flows, grid, by.x = c('grid_exactcut_id'), by.y = c('grid_exact_cut'))
+rm(traffic_flows)
+grid_traffic              <- grid_traffic[order(grid_traffic$toid),]
+
+##
+emissions_grids              <- merge(emissions, grid, by.x = 'grid_exactcut_id', by.y = 'grid_exact_cut')
+rm(emissions)
+emissions_grids              <- emissions_grids[order(emissions_grids$toid),]
+
+##
+
+all_data                <- merge(emissions_grids, grid_traffic, by.x = c('toid', 'easting', 'northing'), by.y = c('toid', 'easting', 'northing'))
+
+rm(grid, grid_traffic, emissions_grids,drop)
+
+##
+all_data <- all_data[!(all_data$desc_term %in% c('Alley', 'Private Road - Publicly Accessible', 'Pedestrianised Street')),]
+all_data <- all_data[all_data$pollutant %in% sources,]
+
+###
+
+all_data$light_emissions_prediction <- NA
+all_data$heavy_emissions_prediction <- NA
+all_data$total_emissions_prediction <- NA
+
+for (i in 1:length(sources)) {
+  
+  light_scaling_factor <- sum(all_data[all_data$pollutant == sources[i] ,'total_light_emissions']) / 
+                          sum(result[result$pollutant     == sources[i] ,'total_light_emissions'])
+  
+  heavy_scaling_factor <- sum(all_data[all_data$pollutant == sources[i] ,'total_heavy_emissions']) / 
+                          sum(result[result$pollutant     == sources[i] ,'total_heavy_emissions'])
+  
+  all_data[all_data$pollutant == sources[i],'light_emissions_prediction'] <-   predict(light_models[[i]], all_data[all_data$pollutant == sources[i],])*light_scaling_factor
+  all_data[all_data$pollutant == sources[i],'heavy_emissions_prediction'] <-   predict(heavy_models[[i]], all_data[all_data$pollutant == sources[i],])*heavy_scaling_factor
+  
+  
+}
+
+all_data$total_emissions_prediction <- all_data$light_emissions_prediction*light_scaling_factor + all_data$heavy_emissions_prediction
+
+##
+
+##
+no2 <- ggplot(all_data[all_data$pollutant == 'no2',], aes(total_emissions, total_emissions_prediction)) +
+  geom_point(size=2, alpha=0.3, aes(colour=desc_term, stroke=0)) +
+  theme(legend.position="bottom",
+        legend.title = element_blank()) +
+  facet_wrap(.~desc_term, scales='free') +
+  geom_abline(slope=1, intercept=0)
+
+nox <- ggplot(all_data[all_data$pollutant == 'nox',], aes(total_emissions, total_emissions_prediction)) +
+  geom_point(size=2, alpha=0.3, aes(colour=desc_term, stroke=0)) +
+  theme(legend.position="bottom",
+        legend.title = element_blank()) +
+  facet_wrap(.~desc_term, scales='free') +
+  geom_abline(slope=1, intercept=0)
+
+pm10 <- ggplot(all_data[all_data$pollutant == 'pm10',], aes(total_emissions, total_emissions_prediction)) +
+  geom_point(size=2, alpha=0.3, aes(colour=desc_term, stroke=0)) +
+  theme(legend.position="bottom",
+        legend.title = element_blank()) +
+  facet_wrap(.~desc_term, scales='free') +
+  geom_abline(slope=1, intercept=0)
+
+pm25 <- ggplot(all_data[all_data$pollutant == 'pm25',], aes(total_emissions, total_emissions_prediction)) +
+  geom_point(size=2, alpha=0.3, aes(colour=desc_term, stroke=0)) +
+  theme(legend.position="bottom",
+        legend.title = element_blank()) +
+  facet_wrap(.~desc_term, scales='free') +
+  geom_abline(slope=1, intercept=0)
+
+```
+
+### 2025 Predictions
+```{r} 
+no2
+
+kable(modStats(all_data[all_data$pollutant == 'no2',], mod = 'total_emissions_prediction', obs = 'total_emissions'))  %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F, position = "left")
+```
+
+```{r} 
+nox 
+
+kable(modStats(all_data[all_data$pollutant == 'nox',], mod = 'total_emissions_prediction', obs = 'total_emissions'))  %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F, position = "left")
+```
+
+```{r} 
+pm10
+
+kable(modStats(all_data[all_data$pollutant == 'pm10',], mod = 'total_emissions_prediction', obs = 'total_emissions'))  %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F, position = "left")
+```
+
+```{r} 
+pm25
+
+kable(modStats(all_data[all_data$pollutant == 'pm25',], mod = 'total_emissions_prediction', obs = 'total_emissions'))  %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F, position = "left")
 ```
