@@ -265,6 +265,13 @@ Now need to think about how these concentrations at 10km level, relate to the ro
 
 ```{r linking_10km_back_to_roads}
 ten_km_emissions_polygons <- rasterToPolygons(ten_km_emissions_raster)
+
+temp <- st_as_sf(ten_km_emissions_polygons)
+temp <- st_set_crs(temp, 27700)
+temp <- st_transform(temp, 4326)
+st_write(temp, "ten_km_emissions_polygons_4326.geojson", delete_layer = TRUE)
+
+
 ```
 
 **NO2 10km polygons plot**
